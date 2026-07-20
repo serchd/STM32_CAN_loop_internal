@@ -1,0 +1,121 @@
+/* ============================================================================
+ * ADICIONES PARA: Core/Src/main.c
+ * ============================================================================
+ * main.c NO define las tareas ni los mutex (eso vive en freertos.c). Aqui solo
+ * va: inicializacion del periferico CAN, y los callbacks de HAL que se
+ * disparan por interrupcion (CAN RX, boton). Usamos "extern" para acceder a
+ * las variables que SI viven en freertos.c.
+ * ==========================================================================*/
+
+
+/* ---------------------------------------------------------------------------
+ * USER CODE BEGIN PTD
+ * -------------------------------------------------------------------------*/
+/* Mismo typedef que en freertos.c -- en C no hay conflicto entre archivos
+   distintos, cada uno es su propia unidad de traduccion. */
+typedef struct {
+    uint16_t rpm;
+    int8_t   coolant_temp_c;
+    uint8_t  engine_running;
+    uint32_t rx_count;
+} EngineStatus_t;
+
+typedef struct {
+    volatile uint32_t led_alive_tick;
+    volatile uint32_t can_tx_alive_tick;
+    volatile uint32_t can_rx_alive_tick;
+} TaskHealth_t;
+/* USER CODE END PTD */
+
+
+/* ---------------------------------------------------------------------------
+ * USER CODE BEGIN PV
+ * -------------------------------------------------------------------------*/
+/* Estas variables las CREA freertos.c -- aqui solo las referenciamos */
+extern EngineStatus_t g_engine_status;
+extern TaskHealth_t   g_task_health;
+extern osMutexId_t    canDataMutexHandle;
+/* USER CODE END PV */
+
+
+/* ---------------------------------------------------------------------------
+ * USER CODE BEGIN PFP
+ * -------------------------------------------------------------------------*/
+static void CAN_Filter_Config(void);
+extern void UART_Print(const char *msg);   /* definida en freertos.c */
+/* USER CODE END PFP */
+
+
+/* ---------------------------------------------------------------------------
+ * 4) USER CODE BEGIN 0   (funciones auxiliares, ANTES de main() -- viene
+ *    justo despues de las declaraciones de arriba, antes de "int main(void)")
+ * -------------------------------------------------------------------------*/
+static void CAN_Filter_Config(void)
+{
+    CAN_FilterTypeDef filterConfig;
+
+    filterConfig.FilterBank = 0;
+    filterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
+    filterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
+    filterConfig.FilterIdHigh = 0x0000;
+    filterConfig.FilterIdLow = 0x0000;
+    filterConfig.FilterMaskIdHigh = 0x0000;
+    filterConfig.FilterMaskIdLow = 0x0000;
+    filterConfig.FilterFIFOAssignment = CAN_RX_FIFO0;
+    filterConfig.FilterActivation = ENABLE;
+    filterConfig.SlaveStartFilterBank = 14;
+
+    if (HAL_CAN_ConfigFilter(&hcan1, &filterConfig) != HAL_OK) {
+        Error_Handler();
+    }
+}
+/* USER CODE END 0 */
+
+
+/* ---------------------------------------------------------------------------
+ * 5) USER CODE BEGIN 2   (DENTRO de main(), justo despues de
+ *    MX_USART2_UART_Init(), ANTES de osKernelInitialize())
+ * -------------------------------------------------------------------------*/
+CAN_Filter_Config();
+
+HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
+
+if (HAL_CAN_Start(&hcan1) != HAL_OK) {
+    Error_Handler();
+}
+/* USER CODE END 2 */
+
+
+/* ---------------------------------------------------------------------------
+ * 6) USER CODE BEGIN 4   (DESPUES de SystemClock_Config(), ANTES de
+ *    HAL_TIM_PeriodElapsedCallback -- fuera de main(), a nivel de archivo)
+ * -------------------------------------------------------------------------*/
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+    CAN_RxHeaderTypeDef rxHeader;
+    uint8_t rxData[8];
+
+    if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &rxHeader, rxData) != HAL_OK) {
+        return;
+    }
+
+    if (rxHeader.StdId == 0x100) {
+        osMutexAcquire(canDataMutexHandle, 0);
+        g_engine_status.rpm            = (rxData[0] << 8) | rxData[1];
+        g_engine_status.coolant_temp_c = (int8_t)rxData[2] - 40;
+        g_engine_status.engine_running = rxData[3] & 0x01;
+        g_engine_status.rx_count++;
+        osMutexRelease(canDataMutexHandle);
+
+        g_task_health.can_rx_alive_tick = osKernelGetTickCount();
+    }
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    if (GPIO_Pin == GPIO_PIN_13) {
+        extern osSemaphoreId_t buttonSemHandle;  /* definida en freertos.c */
+        osSemaphoreRelease(buttonSemHandle);
+    }
+}
+/* USER CODE END 4 */
