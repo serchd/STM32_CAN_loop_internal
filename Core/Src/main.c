@@ -40,16 +40,30 @@ typedef struct {
     uint32_t rx_count;
 } EngineStatus_t;
 
+/* Dinamica del vehiculo: velocidad y freno. Senales independientes del motor,
+ * simulan lo que en un vehiculo real vendria del ABS/ESP module (velocidad de
+ * ruedas) y del pedal de freno, via el bus CAN de carroceria. */
+typedef struct {
+    uint16_t vehicle_speed_kph_x10; /* km/h * 10, ej. 355 = 35.5 km/h */
+    uint8_t  brake_pedal_pressed;   /* 0 = suelto, 1 = presionado */
+    uint16_t brake_pressure_bar;    /* presion de linea de freno simulada */
+    uint32_t rx_count;
+} VehicleDynamics_t;
+
 typedef struct {
     volatile uint32_t led_alive_tick;
     volatile uint32_t can_tx_alive_tick;
     volatile uint32_t can_rx_alive_tick;
+    volatile uint32_t vehicle_tx_alive_tick;
 } TaskHealth_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+/* IDs CAN usados por el proyecto (documentados en CAN_root_cause.pdf / anexo de senales) */
+#define CANID_ENGINE_STATUS    0x100U  /* RPM, temp. refrigerante, running   */
+#define CANID_VEHICLE_SPEED    0x101U  /* velocidad de vehiculo (x10 km/h)   */
+#define CANID_BRAKE_STATUS     0x102U  /* pedal de freno + presion de linea  */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -72,9 +86,10 @@ typedef enum {
 
 volatile ResetReason_t g_reset_reason = RESET_REASON_UNKNOWN;
 /* Estas variables las CREA freertos.c -- aqui solo las referenciamos */
-extern EngineStatus_t g_engine_status;
-extern TaskHealth_t   g_task_health;
-extern osMutexId_t    canDataMutexHandle;
+extern EngineStatus_t     g_engine_status;
+extern VehicleDynamics_t  g_vehicle_dynamics;
+extern TaskHealth_t       g_task_health;
+extern osMutexId_t        canDataMutexHandle;
 
 /* USER CODE END PV */
 
@@ -85,6 +100,7 @@ void MX_FREERTOS_Init(void);
 
 static void CAN_Filter_Config(void);
 static void Error_Handler_Ctx(const char *where);   // <-- AGREGA ESTA LÍNEA
+static void CAN_Diag_Print(const char *tag);   /* diagnostico via UART, vive en main.c (no en el HAL vendor) */
 extern void UART_Print(const char *msg);   /* definida en freertos.c */
 /* USER CODE END PFP */
 
@@ -139,6 +155,23 @@ static void Error_Handler_Ctx(const char *where)
     HAL_UART_Transmit(&huart2, (uint8_t*)diag, strlen(diag), 100);
     Error_Handler();
 }
+
+/* Diagnostico de bxCAN por UART. Reemplaza los prints que antes vivian
+ * parcheados dentro de stm32f4xx_hal_can.c (mala practica: se pierden al
+ * regenerar el HAL). Aqui quedan en codigo de usuario, a salvo de CubeMX. */
+static void CAN_Diag_Print(const char *tag)
+{
+    char dbg[140];
+    snprintf(dbg, sizeof(dbg),
+             "DBG %s: MCR=0x%08lX MSR=0x%08lX ESR=0x%08lX State=%d ErrCode=0x%08lX\r\n",
+             tag,
+             (unsigned long)hcan1.Instance->MCR,
+             (unsigned long)hcan1.Instance->MSR,
+             (unsigned long)hcan1.Instance->ESR,
+             (int)hcan1.State,
+             (unsigned long)hcan1.ErrorCode);
+    HAL_UART_Transmit(&huart2, (uint8_t*)dbg, strlen(dbg), 100);
+}
 /* USER CODE END 0 */
 
 /**
@@ -186,28 +219,18 @@ int main(void)
 
   CAN_Filter_Config();
 
-  /* Forzar salida de modo Sleep y esperar confirmacion real (SLAK) */
-  CLEAR_BIT(hcan1.Instance->MCR, CAN_MCR_SLEEP);
+  /* NOTA: ya no se repite aqui la salida de Sleep -- HAL_CAN_Init() (dentro de
+   * MX_CAN1_Init) ya la hace y espera SLAK. Repetirla era codigo muerto que
+   * solo agregaba ruido al diagnostico. */
 
-  uint32_t sleep_wait_start = HAL_GetTick();
-  while ((hcan1.Instance->MSR & CAN_MSR_SLAK) != 0U) {
-      if ((HAL_GetTick() - sleep_wait_start) > 100) {
-          char dbg3[100];
-          snprintf(dbg3, sizeof(dbg3), "DBG: SLAK nunca bajo! MCR=0x%08lX MSR=0x%08lX\r\n",
-                   (unsigned long)hcan1.Instance->MCR, (unsigned long)hcan1.Instance->MSR);
-          HAL_UART_Transmit(&huart2, (uint8_t*)dbg3, strlen(dbg3), 100);
-          break;
-      }
-  }
-
-  char dbg4[80];
-  snprintf(dbg4, sizeof(dbg4), "DBG: Sleep exit tomo %lu ms, MSR=0x%08lX\r\n",
-           (unsigned long)(HAL_GetTick() - sleep_wait_start), (unsigned long)hcan1.Instance->MSR);
-  HAL_UART_Transmit(&huart2, (uint8_t*)dbg4, strlen(dbg4), 100);
+  CAN_Diag_Print("antes de Start");
 
   if (HAL_CAN_Start(&hcan1) != HAL_OK) {
+      CAN_Diag_Print("HAL_CAN_Start FALLO");
       Error_Handler_Ctx("HAL_CAN_Start");
   }
+
+  CAN_Diag_Print("CAN arrancado OK");
 
   HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
   /* USER CODE END 2 */
@@ -285,17 +308,35 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
         return;
     }
 
-
-    if (rxHeader.StdId == 0x100) {
-        //osMutexAcquire(canDataMutexHandle, 0);
-    	UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
+    if (rxHeader.StdId == CANID_ENGINE_STATUS) {
+        UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
 
         g_engine_status.rpm            = (rxData[0] << 8) | rxData[1];
         g_engine_status.coolant_temp_c = (int8_t)rxData[2] - 40;
         g_engine_status.engine_running = rxData[3] & 0x01;
         g_engine_status.rx_count++;
 
-        //osMutexRelease(canDataMutexHandle);
+        taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);
+
+        g_task_health.can_rx_alive_tick = osKernelGetTickCount();
+    }
+    else if (rxHeader.StdId == CANID_VEHICLE_SPEED) {
+        UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
+
+        g_vehicle_dynamics.vehicle_speed_kph_x10 = (rxData[0] << 8) | rxData[1];
+        g_vehicle_dynamics.rx_count++;
+
+        taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);
+
+        g_task_health.can_rx_alive_tick = osKernelGetTickCount();
+    }
+    else if (rxHeader.StdId == CANID_BRAKE_STATUS) {
+        UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
+
+        g_vehicle_dynamics.brake_pedal_pressed = rxData[0];
+        g_vehicle_dynamics.brake_pressure_bar  = (rxData[1] << 8) | rxData[2];
+        g_vehicle_dynamics.rx_count++;
+
         taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);
 
         g_task_health.can_rx_alive_tick = osKernelGetTickCount();

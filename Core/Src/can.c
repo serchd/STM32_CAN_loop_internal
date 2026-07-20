@@ -84,6 +84,12 @@ void HAL_CAN_MspInit(CAN_HandleTypeDef* canHandle)
     */
     GPIO_InitStruct.Pin = GPIO_PIN_11|GPIO_PIN_12;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    /* FIX RAIZ (ver CAN_root_cause.pdf): sin transceptor conectado, PA11 (CAN1_RX)
+     * queda flotando con NOPULL. El bxCAN necesita ver 11 bits recesivos en el
+     * PIN FISICO CAN_RX para salir de modo Init -- esto aplica SIEMPRE, incluso
+     * en Silent+Loopback, porque los modos de test solo se activan una vez que
+     * ya se salio de Init. Con PULLUP el pin idlea en recesivo sin transceptor
+     * y HAL_CAN_Start() ya no se cuelga esperando INAK. */
     //GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Pull = GPIO_PULLUP;      // <-- CAMBIA esto (antes GPIO_NOPULL)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
