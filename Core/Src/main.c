@@ -28,7 +28,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "bcm_sim.h"   /* generado con: cantools generate_c_source bcm_sim.dbc */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -60,10 +60,8 @@ typedef struct {
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-/* IDs CAN usados por el proyecto (documentados en CAN_root_cause.pdf / anexo de senales) */
-#define CANID_ENGINE_STATUS    0x100U  /* RPM, temp. refrigerante, running   */
-#define CANID_VEHICLE_SPEED    0x101U  /* velocidad de vehiculo (x10 km/h)   */
-#define CANID_BRAKE_STATUS     0x102U  /* pedal de freno + presion de linea  */
+/* Los IDs (BCM_SIM_*_FRAME_ID) y longitudes (BCM_SIM_*_LENGTH) vienen de
+ * bcm_sim.h, generado desde bcm_sim.dbc. Una sola fuente de verdad. */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -308,33 +306,52 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
         return;
     }
 
-    if (rxHeader.StdId == CANID_ENGINE_STATUS) {
+    if (rxHeader.StdId == BCM_SIM_ENGINE_STATUS_FRAME_ID) {
+        struct bcm_sim_engine_status_t msg;
+
+        if (bcm_sim_engine_status_unpack(&msg, rxData, rxHeader.DLC) != 0) {
+            return;   /* frame corrupto o de longitud invalida, se descarta */
+        }
+
         UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
 
-        g_engine_status.rpm            = (rxData[0] << 8) | rxData[1];
-        g_engine_status.coolant_temp_c = (int8_t)rxData[2] - 40;
-        g_engine_status.engine_running = rxData[3] & 0x01;
+        g_engine_status.rpm            = msg.rpm; /* escala 1, raw == fisico */
+        g_engine_status.coolant_temp_c = (int8_t)bcm_sim_engine_status_coolant_temp_decode(msg.coolant_temp);
+        g_engine_status.engine_running = msg.engine_running;
         g_engine_status.rx_count++;
 
         taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);
 
         g_task_health.can_rx_alive_tick = osKernelGetTickCount();
     }
-    else if (rxHeader.StdId == CANID_VEHICLE_SPEED) {
+    else if (rxHeader.StdId == BCM_SIM_VEHICLE_SPEED_FRAME_ID) {
+        struct bcm_sim_vehicle_speed_t msg;
+
+        if (bcm_sim_vehicle_speed_unpack(&msg, rxData, rxHeader.DLC) != 0) {
+            return;
+        }
+
         UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
 
-        g_vehicle_dynamics.vehicle_speed_kph_x10 = (rxData[0] << 8) | rxData[1];
+        /* msg.speed ya esta en decimas de km/h (raw), coincide con nuestro campo x10 */
+        g_vehicle_dynamics.vehicle_speed_kph_x10 = msg.speed;
         g_vehicle_dynamics.rx_count++;
 
         taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);
 
         g_task_health.can_rx_alive_tick = osKernelGetTickCount();
     }
-    else if (rxHeader.StdId == CANID_BRAKE_STATUS) {
+    else if (rxHeader.StdId == BCM_SIM_BRAKE_STATUS_FRAME_ID) {
+        struct bcm_sim_brake_status_t msg;
+
+        if (bcm_sim_brake_status_unpack(&msg, rxData, rxHeader.DLC) != 0) {
+            return;
+        }
+
         UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
 
-        g_vehicle_dynamics.brake_pedal_pressed = rxData[0];
-        g_vehicle_dynamics.brake_pressure_bar  = (rxData[1] << 8) | rxData[2];
+        g_vehicle_dynamics.brake_pedal_pressed = msg.brake_pedal;
+        g_vehicle_dynamics.brake_pressure_bar  = msg.brake_pressure;
         g_vehicle_dynamics.rx_count++;
 
         taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);

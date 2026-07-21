@@ -31,6 +31,7 @@
 #include "can.h"
 #include "usart.h"
 #include "iwdg.h"
+#include "bcm_sim.h"   /* generado con: cantools generate_c_source bcm_sim.dbc */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -59,9 +60,10 @@ typedef struct {
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define CANID_ENGINE_STATUS    0x100U
-#define CANID_VEHICLE_SPEED    0x101U
-#define CANID_BRAKE_STATUS     0x102U
+/* Los IDs de mensaje ya no se hardcodean aqui: vienen de bcm_sim.h
+ * (BCM_SIM_ENGINE_STATUS_FRAME_ID, etc.), generados directo desde la DBC.
+ * Si la DBC cambia, este codigo se recompila con los IDs correctos --
+ * ya no hay que sincronizar numeros a mano en dos lugares. */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -227,16 +229,17 @@ void StartLedTask(void *argument)
 
 void StartCanTxTask(void *argument) {
 	CAN_TxHeaderTypeDef txHeader;
-	uint8_t txData[8];
+	uint8_t txData[BCM_SIM_ENGINE_STATUS_LENGTH];
 	uint32_t txMailbox;
 	uint16_t sim_rpm = 800;
 	uint8_t direction_up = 1;
+	struct bcm_sim_engine_status_t msg;
 
-	txHeader.StdId = CANID_ENGINE_STATUS;
+	txHeader.StdId = BCM_SIM_ENGINE_STATUS_FRAME_ID;
 	txHeader.ExtId = 0;
 	txHeader.IDE = CAN_ID_STD;
 	txHeader.RTR = CAN_RTR_DATA;
-	txHeader.DLC = 4;
+	txHeader.DLC = BCM_SIM_ENGINE_STATUS_LENGTH;
 	txHeader.TransmitGlobalTime = DISABLE;
 
 	for (;;) {
@@ -250,12 +253,15 @@ void StartCanTxTask(void *argument) {
 				direction_up = 1;
 		}
 
-		txData[0] = (sim_rpm >> 8) & 0xFF;
-		txData[1] = sim_rpm & 0xFF;
-		txData[2] = 90 + 40;
-		txData[3] = 0x01;
+		/* Valores fisicos -> raw de bus, via las funciones _encode() generadas
+		 * desde la DBC (aplican escala/offset por ti, igual que Com_SendSignal). */
+		msg.rpm            = bcm_sim_engine_status_rpm_encode((double)sim_rpm);
+		msg.coolant_temp   = bcm_sim_engine_status_coolant_temp_encode(90.0);
+		msg.engine_running = bcm_sim_engine_status_engine_running_encode(1.0);
 
-		if (HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox)
+		if (bcm_sim_engine_status_pack(txData, &msg, sizeof(txData)) < 0) {
+			UART_Print("WARN: bcm_sim_engine_status_pack fallo\r\n");
+		} else if (HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox)
 				!= HAL_OK) {
 			UART_Print("WARN: fallo al transmitir CAN (engine status)\r\n");
 		}
@@ -276,27 +282,29 @@ void StartCanTxTask(void *argument) {
 void StartVehicleTxTask(void *argument) {
 	CAN_TxHeaderTypeDef txHeaderSpeed;
 	CAN_TxHeaderTypeDef txHeaderBrake;
-	uint8_t txDataSpeed[8];
-	uint8_t txDataBrake[8];
+	uint8_t txDataSpeed[BCM_SIM_VEHICLE_SPEED_LENGTH];
+	uint8_t txDataBrake[BCM_SIM_BRAKE_STATUS_LENGTH];
 	uint32_t txMailbox;
+	struct bcm_sim_vehicle_speed_t msgSpeed;
+	struct bcm_sim_brake_status_t  msgBrake;
 
 	uint16_t sim_speed_kph_x10 = 0;   /* arranca detenido */
 	uint8_t  speed_dir_up = 1;
 	uint8_t  brake_toggle_counter = 0;
 	uint8_t  brake_pressed = 0;
 
-	txHeaderSpeed.StdId = CANID_VEHICLE_SPEED;
+	txHeaderSpeed.StdId = BCM_SIM_VEHICLE_SPEED_FRAME_ID;
 	txHeaderSpeed.ExtId = 0;
 	txHeaderSpeed.IDE = CAN_ID_STD;
 	txHeaderSpeed.RTR = CAN_RTR_DATA;
-	txHeaderSpeed.DLC = 2;
+	txHeaderSpeed.DLC = BCM_SIM_VEHICLE_SPEED_LENGTH;
 	txHeaderSpeed.TransmitGlobalTime = DISABLE;
 
-	txHeaderBrake.StdId = CANID_BRAKE_STATUS;
+	txHeaderBrake.StdId = BCM_SIM_BRAKE_STATUS_FRAME_ID;
 	txHeaderBrake.ExtId = 0;
 	txHeaderBrake.IDE = CAN_ID_STD;
 	txHeaderBrake.RTR = CAN_RTR_DATA;
-	txHeaderBrake.DLC = 3;
+	txHeaderBrake.DLC = BCM_SIM_BRAKE_STATUS_LENGTH;
 	txHeaderBrake.TransmitGlobalTime = DISABLE;
 
 	for (;;) {
@@ -312,10 +320,12 @@ void StartVehicleTxTask(void *argument) {
 				speed_dir_up = 1;
 		}
 
-		txDataSpeed[0] = (sim_speed_kph_x10 >> 8) & 0xFF;
-		txDataSpeed[1] = sim_speed_kph_x10 & 0xFF;
+		/* sim_speed_kph_x10 esta en decimas de km/h -> pasar a double km/h fisico */
+		msgSpeed.speed = bcm_sim_vehicle_speed_speed_encode(sim_speed_kph_x10 / 10.0);
 
-		if (HAL_CAN_AddTxMessage(&hcan1, &txHeaderSpeed, txDataSpeed, &txMailbox)
+		if (bcm_sim_vehicle_speed_pack(txDataSpeed, &msgSpeed, sizeof(txDataSpeed)) < 0) {
+			UART_Print("WARN: bcm_sim_vehicle_speed_pack fallo\r\n");
+		} else if (HAL_CAN_AddTxMessage(&hcan1, &txHeaderSpeed, txDataSpeed, &txMailbox)
 				!= HAL_OK) {
 			UART_Print("WARN: fallo al transmitir CAN (velocidad)\r\n");
 		}
@@ -326,15 +336,16 @@ void StartVehicleTxTask(void *argument) {
 			brake_toggle_counter = 0;
 			brake_pressed = !brake_pressed;
 		}
-		uint16_t brake_pressure = brake_pressed
-				? (uint16_t)(80U + (sim_speed_kph_x10 % 40U))
-				: 0U;
+		double brake_pressure = brake_pressed
+				? (double)(80U + (sim_speed_kph_x10 % 40U))
+				: 0.0;
 
-		txDataBrake[0] = brake_pressed;
-		txDataBrake[1] = (brake_pressure >> 8) & 0xFF;
-		txDataBrake[2] = brake_pressure & 0xFF;
+		msgBrake.brake_pedal    = bcm_sim_brake_status_brake_pedal_encode((double)brake_pressed);
+		msgBrake.brake_pressure = bcm_sim_brake_status_brake_pressure_encode(brake_pressure);
 
-		if (HAL_CAN_AddTxMessage(&hcan1, &txHeaderBrake, txDataBrake, &txMailbox)
+		if (bcm_sim_brake_status_pack(txDataBrake, &msgBrake, sizeof(txDataBrake)) < 0) {
+			UART_Print("WARN: bcm_sim_brake_status_pack fallo\r\n");
+		} else if (HAL_CAN_AddTxMessage(&hcan1, &txHeaderBrake, txDataBrake, &txMailbox)
 				!= HAL_OK) {
 			UART_Print("WARN: fallo al transmitir CAN (freno)\r\n");
 		}
@@ -359,8 +370,8 @@ void StartCanRxPrintTask(void *argument) {
 					"RPM=%u CoolantTemp=%dC Running=%u | Speed=%u.%ukmh Brake=%u(%ubar) | RxCount=%lu\r\n",
 					local_engine.rpm, local_engine.coolant_temp_c,
 					local_engine.engine_running,
-					local_vehicle.vehicle_speed_kph_x10 / 10,
-					local_vehicle.vehicle_speed_kph_x10 % 10,
+					(unsigned)(local_vehicle.vehicle_speed_kph_x10 / 10),
+					(unsigned)(local_vehicle.vehicle_speed_kph_x10 % 10),
 					local_vehicle.brake_pedal_pressed,
 					local_vehicle.brake_pressure_bar,
 					(unsigned long) (local_engine.rx_count + local_vehicle.rx_count));
@@ -391,7 +402,6 @@ void StartWatchdogTask(void *argument) {
 	for (;;) {
 		uint32_t now = osKernelGetTickCount();
 		uint8_t all_healthy = 1;
-
 
 		if ((now - g_task_health.led_alive_tick) > MAX_SILENCE_MS)
 			all_healthy = 0;

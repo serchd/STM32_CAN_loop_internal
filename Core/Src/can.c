@@ -40,10 +40,6 @@ void MX_CAN1_Init(void)
 
   /* USER CODE END CAN1_Init 1 */
 	  hcan1.Instance = CAN1;
-	  /* Software master reset del bxCAN, aparte del reset de RCC */
-	  SET_BIT(hcan1.Instance->MCR, CAN_MCR_RESET);
-	  while (READ_BIT(hcan1.Instance->MCR, CAN_MCR_RESET) != 0U) { /* espera breve */ }
-
 	  hcan1.Init.Prescaler = 28;
 	  hcan1.Init.Mode = CAN_MODE_SILENT_LOOPBACK;
 	  hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
