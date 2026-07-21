@@ -81,6 +81,139 @@ static inline uint16_t unpack_right_shift_u16(
     return (uint16_t)((uint16_t)(value & mask) >> shift);
 }
 
+int bcm_sim_run_meta_pack(
+    uint8_t *dst_p,
+    const struct bcm_sim_run_meta_t *src_p,
+    size_t size)
+{
+    if (size < 6u) {
+        return (-EINVAL);
+    }
+
+    memset(&dst_p[0], 0, 6);
+
+    dst_p[0] |= pack_left_shift_u8(src_p->scenario_id, 0u, 0xffu);
+    dst_p[1] |= pack_left_shift_u8(src_p->run_id, 0u, 0xffu);
+    dst_p[2] |= pack_left_shift_u16(src_p->seed_low16, 0u, 0xffu);
+    dst_p[3] |= pack_right_shift_u16(src_p->seed_low16, 8u, 0xffu);
+    dst_p[4] |= pack_left_shift_u16(src_p->time_s, 0u, 0xffu);
+    dst_p[5] |= pack_right_shift_u16(src_p->time_s, 8u, 0xffu);
+
+    return (6);
+}
+
+int bcm_sim_run_meta_unpack(
+    struct bcm_sim_run_meta_t *dst_p,
+    const uint8_t *src_p,
+    size_t size)
+{
+    if (size < 6u) {
+        return (-EINVAL);
+    }
+
+    dst_p->scenario_id = unpack_right_shift_u8(src_p[0], 0u, 0xffu);
+    dst_p->run_id = unpack_right_shift_u8(src_p[1], 0u, 0xffu);
+    dst_p->seed_low16 = unpack_right_shift_u16(src_p[2], 0u, 0xffu);
+    dst_p->seed_low16 |= unpack_left_shift_u16(src_p[3], 8u, 0xffu);
+    dst_p->time_s = unpack_right_shift_u16(src_p[4], 0u, 0xffu);
+    dst_p->time_s |= unpack_left_shift_u16(src_p[5], 8u, 0xffu);
+
+    return (0);
+}
+
+int bcm_sim_run_meta_init(struct bcm_sim_run_meta_t *msg_p)
+{
+    if (msg_p == NULL) return -1;
+
+    memset(msg_p, 0, sizeof(struct bcm_sim_run_meta_t));
+
+    return 0;
+}
+
+uint8_t bcm_sim_run_meta_scenario_id_encode(double value)
+{
+    return (uint8_t)(value);
+}
+
+double bcm_sim_run_meta_scenario_id_decode(uint8_t value)
+{
+    return ((double)value);
+}
+
+bool bcm_sim_run_meta_scenario_id_is_in_range(uint8_t value)
+{
+    return (value <= 31u);
+}
+
+bool bcm_sim_run_meta_scenario_id_is_in_phys_range(double value)
+{
+    return ((value >= 0.0) && (value <= 31.0));
+}
+
+uint8_t bcm_sim_run_meta_run_id_encode(double value)
+{
+    return (uint8_t)(value);
+}
+
+double bcm_sim_run_meta_run_id_decode(uint8_t value)
+{
+    return ((double)value);
+}
+
+bool bcm_sim_run_meta_run_id_is_in_range(uint8_t value)
+{
+    (void)value;
+
+    return (true);
+}
+
+bool bcm_sim_run_meta_run_id_is_in_phys_range(double value)
+{
+    return ((value >= 0.0) && (value <= 255.0));
+}
+
+uint16_t bcm_sim_run_meta_seed_low16_encode(double value)
+{
+    return (uint16_t)(value);
+}
+
+double bcm_sim_run_meta_seed_low16_decode(uint16_t value)
+{
+    return ((double)value);
+}
+
+bool bcm_sim_run_meta_seed_low16_is_in_range(uint16_t value)
+{
+    (void)value;
+
+    return (true);
+}
+
+bool bcm_sim_run_meta_seed_low16_is_in_phys_range(double value)
+{
+    return ((value >= 0.0) && (value <= 65535.0));
+}
+
+uint16_t bcm_sim_run_meta_time_s_encode(double value)
+{
+    return (uint16_t)(value);
+}
+
+double bcm_sim_run_meta_time_s_decode(uint16_t value)
+{
+    return ((double)value);
+}
+
+bool bcm_sim_run_meta_time_s_is_in_range(uint16_t value)
+{
+    return (value <= 600u);
+}
+
+bool bcm_sim_run_meta_time_s_is_in_phys_range(double value)
+{
+    return ((value >= 0.0) && (value <= 600.0));
+}
+
 int bcm_sim_engine_status_pack(
     uint8_t *dst_p,
     const struct bcm_sim_engine_status_t *src_p,
@@ -254,17 +387,16 @@ int bcm_sim_brake_status_pack(
     const struct bcm_sim_brake_status_t *src_p,
     size_t size)
 {
-    if (size < 3u) {
+    if (size < 2u) {
         return (-EINVAL);
     }
 
-    memset(&dst_p[0], 0, 3);
+    memset(&dst_p[0], 0, 2);
 
-    dst_p[0] |= pack_left_shift_u8(src_p->brake_pedal, 0u, 0xffu);
-    dst_p[1] |= pack_left_shift_u16(src_p->brake_pressure, 0u, 0xffu);
-    dst_p[2] |= pack_right_shift_u16(src_p->brake_pressure, 8u, 0xffu);
+    dst_p[0] |= pack_left_shift_u8(src_p->brake_pedal_pct, 0u, 0xffu);
+    dst_p[1] |= pack_left_shift_u8(src_p->brake_override_flag, 0u, 0x01u);
 
-    return (3);
+    return (2);
 }
 
 int bcm_sim_brake_status_unpack(
@@ -272,13 +404,12 @@ int bcm_sim_brake_status_unpack(
     const uint8_t *src_p,
     size_t size)
 {
-    if (size < 3u) {
+    if (size < 2u) {
         return (-EINVAL);
     }
 
-    dst_p->brake_pedal = unpack_right_shift_u8(src_p[0], 0u, 0xffu);
-    dst_p->brake_pressure = unpack_right_shift_u16(src_p[1], 0u, 0xffu);
-    dst_p->brake_pressure |= unpack_left_shift_u16(src_p[2], 8u, 0xffu);
+    dst_p->brake_pedal_pct = unpack_right_shift_u8(src_p[0], 0u, 0xffu);
+    dst_p->brake_override_flag = unpack_right_shift_u8(src_p[1], 0u, 0x01u);
 
     return (0);
 }
@@ -292,42 +423,363 @@ int bcm_sim_brake_status_init(struct bcm_sim_brake_status_t *msg_p)
     return 0;
 }
 
-uint8_t bcm_sim_brake_status_brake_pedal_encode(double value)
+uint8_t bcm_sim_brake_status_brake_pedal_pct_encode(double value)
 {
     return (uint8_t)(value);
 }
 
-double bcm_sim_brake_status_brake_pedal_decode(uint8_t value)
+double bcm_sim_brake_status_brake_pedal_pct_decode(uint8_t value)
 {
     return ((double)value);
 }
 
-bool bcm_sim_brake_status_brake_pedal_is_in_range(uint8_t value)
+bool bcm_sim_brake_status_brake_pedal_pct_is_in_range(uint8_t value)
+{
+    return (value <= 100u);
+}
+
+bool bcm_sim_brake_status_brake_pedal_pct_is_in_phys_range(double value)
+{
+    return ((value >= 0.0) && (value <= 100.0));
+}
+
+uint8_t bcm_sim_brake_status_brake_override_flag_encode(double value)
+{
+    return (uint8_t)(value);
+}
+
+double bcm_sim_brake_status_brake_override_flag_decode(uint8_t value)
+{
+    return ((double)value);
+}
+
+bool bcm_sim_brake_status_brake_override_flag_is_in_range(uint8_t value)
 {
     return (value <= 1u);
 }
 
-bool bcm_sim_brake_status_brake_pedal_is_in_phys_range(double value)
+bool bcm_sim_brake_status_brake_override_flag_is_in_phys_range(double value)
 {
     return ((value >= 0.0) && (value <= 1.0));
 }
 
-uint16_t bcm_sim_brake_status_brake_pressure_encode(double value)
+int bcm_sim_powertrain_health_pack(
+    uint8_t *dst_p,
+    const struct bcm_sim_powertrain_health_t *src_p,
+    size_t size)
 {
-    return (uint16_t)(value);
+    if (size < 5u) {
+        return (-EINVAL);
+    }
+
+    memset(&dst_p[0], 0, 5);
+
+    dst_p[0] |= pack_left_shift_u16(src_p->battery_voltage, 0u, 0xffu);
+    dst_p[1] |= pack_right_shift_u16(src_p->battery_voltage, 8u, 0xffu);
+    dst_p[2] |= pack_left_shift_u16(src_p->oil_pressure, 0u, 0xffu);
+    dst_p[3] |= pack_right_shift_u16(src_p->oil_pressure, 8u, 0xffu);
+    dst_p[4] |= pack_left_shift_u8(src_p->crank_signal_quality, 0u, 0xffu);
+
+    return (5);
 }
 
-double bcm_sim_brake_status_brake_pressure_decode(uint16_t value)
+int bcm_sim_powertrain_health_unpack(
+    struct bcm_sim_powertrain_health_t *dst_p,
+    const uint8_t *src_p,
+    size_t size)
+{
+    if (size < 5u) {
+        return (-EINVAL);
+    }
+
+    dst_p->battery_voltage = unpack_right_shift_u16(src_p[0], 0u, 0xffu);
+    dst_p->battery_voltage |= unpack_left_shift_u16(src_p[1], 8u, 0xffu);
+    dst_p->oil_pressure = unpack_right_shift_u16(src_p[2], 0u, 0xffu);
+    dst_p->oil_pressure |= unpack_left_shift_u16(src_p[3], 8u, 0xffu);
+    dst_p->crank_signal_quality = unpack_right_shift_u8(src_p[4], 0u, 0xffu);
+
+    return (0);
+}
+
+int bcm_sim_powertrain_health_init(struct bcm_sim_powertrain_health_t *msg_p)
+{
+    if (msg_p == NULL) return -1;
+
+    memset(msg_p, 0, sizeof(struct bcm_sim_powertrain_health_t));
+
+    return 0;
+}
+
+uint16_t bcm_sim_powertrain_health_battery_voltage_encode(double value)
+{
+    return (uint16_t)(value / 0.01);
+}
+
+double bcm_sim_powertrain_health_battery_voltage_decode(uint16_t value)
+{
+    return ((double)value * 0.01);
+}
+
+bool bcm_sim_powertrain_health_battery_voltage_is_in_range(uint16_t value)
+{
+    return (value <= 2000u);
+}
+
+bool bcm_sim_powertrain_health_battery_voltage_is_in_phys_range(double value)
+{
+    return ((value >= 0.0) && (value <= 20.0));
+}
+
+uint16_t bcm_sim_powertrain_health_oil_pressure_encode(double value)
+{
+    return (uint16_t)(value / 0.1);
+}
+
+double bcm_sim_powertrain_health_oil_pressure_decode(uint16_t value)
+{
+    return ((double)value * 0.1);
+}
+
+bool bcm_sim_powertrain_health_oil_pressure_is_in_range(uint16_t value)
+{
+    return (value <= 1000u);
+}
+
+bool bcm_sim_powertrain_health_oil_pressure_is_in_phys_range(double value)
+{
+    return ((value >= 0.0) && (value <= 100.0));
+}
+
+uint8_t bcm_sim_powertrain_health_crank_signal_quality_encode(double value)
+{
+    return (uint8_t)(value);
+}
+
+double bcm_sim_powertrain_health_crank_signal_quality_decode(uint8_t value)
 {
     return ((double)value);
 }
 
-bool bcm_sim_brake_status_brake_pressure_is_in_range(uint16_t value)
+bool bcm_sim_powertrain_health_crank_signal_quality_is_in_range(uint8_t value)
 {
-    return (value <= 500u);
+    return (value <= 100u);
 }
 
-bool bcm_sim_brake_status_brake_pressure_is_in_phys_range(double value)
+bool bcm_sim_powertrain_health_crank_signal_quality_is_in_phys_range(double value)
 {
-    return ((value >= 0.0) && (value <= 500.0));
+    return ((value >= 0.0) && (value <= 100.0));
+}
+
+int bcm_sim_chassis_health_pack(
+    uint8_t *dst_p,
+    const struct bcm_sim_chassis_health_t *src_p,
+    size_t size)
+{
+    if (size < 3u) {
+        return (-EINVAL);
+    }
+
+    memset(&dst_p[0], 0, 3);
+
+    dst_p[0] |= pack_left_shift_u16(src_p->tire_pressure, 0u, 0xffu);
+    dst_p[1] |= pack_right_shift_u16(src_p->tire_pressure, 8u, 0xffu);
+    dst_p[2] |= pack_left_shift_u8(src_p->fuel_level_pct, 0u, 0xffu);
+
+    return (3);
+}
+
+int bcm_sim_chassis_health_unpack(
+    struct bcm_sim_chassis_health_t *dst_p,
+    const uint8_t *src_p,
+    size_t size)
+{
+    if (size < 3u) {
+        return (-EINVAL);
+    }
+
+    dst_p->tire_pressure = unpack_right_shift_u16(src_p[0], 0u, 0xffu);
+    dst_p->tire_pressure |= unpack_left_shift_u16(src_p[1], 8u, 0xffu);
+    dst_p->fuel_level_pct = unpack_right_shift_u8(src_p[2], 0u, 0xffu);
+
+    return (0);
+}
+
+int bcm_sim_chassis_health_init(struct bcm_sim_chassis_health_t *msg_p)
+{
+    if (msg_p == NULL) return -1;
+
+    memset(msg_p, 0, sizeof(struct bcm_sim_chassis_health_t));
+
+    return 0;
+}
+
+uint16_t bcm_sim_chassis_health_tire_pressure_encode(double value)
+{
+    return (uint16_t)(value / 0.1);
+}
+
+double bcm_sim_chassis_health_tire_pressure_decode(uint16_t value)
+{
+    return ((double)value * 0.1);
+}
+
+bool bcm_sim_chassis_health_tire_pressure_is_in_range(uint16_t value)
+{
+    return (value <= 600u);
+}
+
+bool bcm_sim_chassis_health_tire_pressure_is_in_phys_range(double value)
+{
+    return ((value >= 0.0) && (value <= 60.0));
+}
+
+uint8_t bcm_sim_chassis_health_fuel_level_pct_encode(double value)
+{
+    return (uint8_t)(value);
+}
+
+double bcm_sim_chassis_health_fuel_level_pct_decode(uint8_t value)
+{
+    return ((double)value);
+}
+
+bool bcm_sim_chassis_health_fuel_level_pct_is_in_range(uint8_t value)
+{
+    return (value <= 100u);
+}
+
+bool bcm_sim_chassis_health_fuel_level_pct_is_in_phys_range(double value)
+{
+    return ((value >= 0.0) && (value <= 100.0));
+}
+
+int bcm_sim_throttle_subsystem_pack(
+    uint8_t *dst_p,
+    const struct bcm_sim_throttle_subsystem_t *src_p,
+    size_t size)
+{
+    uint8_t throttle_residual_pct;
+
+    if (size < 4u) {
+        return (-EINVAL);
+    }
+
+    memset(&dst_p[0], 0, 4);
+
+    dst_p[0] |= pack_left_shift_u8(src_p->accel_pedal_pct, 0u, 0xffu);
+    dst_p[1] |= pack_left_shift_u8(src_p->throttle_position_pct, 0u, 0xffu);
+    dst_p[2] |= pack_left_shift_u8(src_p->throttle_expected_pct, 0u, 0xffu);
+    throttle_residual_pct = (uint8_t)src_p->throttle_residual_pct;
+    dst_p[3] |= pack_left_shift_u8(throttle_residual_pct, 0u, 0xffu);
+
+    return (4);
+}
+
+int bcm_sim_throttle_subsystem_unpack(
+    struct bcm_sim_throttle_subsystem_t *dst_p,
+    const uint8_t *src_p,
+    size_t size)
+{
+    uint8_t throttle_residual_pct;
+
+    if (size < 4u) {
+        return (-EINVAL);
+    }
+
+    dst_p->accel_pedal_pct = unpack_right_shift_u8(src_p[0], 0u, 0xffu);
+    dst_p->throttle_position_pct = unpack_right_shift_u8(src_p[1], 0u, 0xffu);
+    dst_p->throttle_expected_pct = unpack_right_shift_u8(src_p[2], 0u, 0xffu);
+    throttle_residual_pct = unpack_right_shift_u8(src_p[3], 0u, 0xffu);
+    dst_p->throttle_residual_pct = (int8_t)throttle_residual_pct;
+
+    return (0);
+}
+
+int bcm_sim_throttle_subsystem_init(struct bcm_sim_throttle_subsystem_t *msg_p)
+{
+    if (msg_p == NULL) return -1;
+
+    memset(msg_p, 0, sizeof(struct bcm_sim_throttle_subsystem_t));
+
+    return 0;
+}
+
+uint8_t bcm_sim_throttle_subsystem_accel_pedal_pct_encode(double value)
+{
+    return (uint8_t)(value);
+}
+
+double bcm_sim_throttle_subsystem_accel_pedal_pct_decode(uint8_t value)
+{
+    return ((double)value);
+}
+
+bool bcm_sim_throttle_subsystem_accel_pedal_pct_is_in_range(uint8_t value)
+{
+    return (value <= 100u);
+}
+
+bool bcm_sim_throttle_subsystem_accel_pedal_pct_is_in_phys_range(double value)
+{
+    return ((value >= 0.0) && (value <= 100.0));
+}
+
+uint8_t bcm_sim_throttle_subsystem_throttle_position_pct_encode(double value)
+{
+    return (uint8_t)(value);
+}
+
+double bcm_sim_throttle_subsystem_throttle_position_pct_decode(uint8_t value)
+{
+    return ((double)value);
+}
+
+bool bcm_sim_throttle_subsystem_throttle_position_pct_is_in_range(uint8_t value)
+{
+    return (value <= 100u);
+}
+
+bool bcm_sim_throttle_subsystem_throttle_position_pct_is_in_phys_range(double value)
+{
+    return ((value >= 0.0) && (value <= 100.0));
+}
+
+uint8_t bcm_sim_throttle_subsystem_throttle_expected_pct_encode(double value)
+{
+    return (uint8_t)(value);
+}
+
+double bcm_sim_throttle_subsystem_throttle_expected_pct_decode(uint8_t value)
+{
+    return ((double)value);
+}
+
+bool bcm_sim_throttle_subsystem_throttle_expected_pct_is_in_range(uint8_t value)
+{
+    return (value <= 100u);
+}
+
+bool bcm_sim_throttle_subsystem_throttle_expected_pct_is_in_phys_range(double value)
+{
+    return ((value >= 0.0) && (value <= 100.0));
+}
+
+int8_t bcm_sim_throttle_subsystem_throttle_residual_pct_encode(double value)
+{
+    return (int8_t)(value);
+}
+
+double bcm_sim_throttle_subsystem_throttle_residual_pct_decode(int8_t value)
+{
+    return ((double)value);
+}
+
+bool bcm_sim_throttle_subsystem_throttle_residual_pct_is_in_range(int8_t value)
+{
+    return ((value >= -80) && (value <= 80));
+}
+
+bool bcm_sim_throttle_subsystem_throttle_residual_pct_is_in_phys_range(double value)
+{
+    return ((value >= -80.0) && (value <= 80.0));
 }

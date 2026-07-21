@@ -32,6 +32,7 @@
 #include "usart.h"
 #include "iwdg.h"
 #include "bcm_sim.h"   /* generado con: cantools generate_c_source bcm_sim.dbc */
+#include "dtc_synth_gen.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -45,8 +46,8 @@ typedef struct {
 
 typedef struct {
 	uint16_t vehicle_speed_kph_x10;
-	uint8_t  brake_pedal_pressed;
-	uint16_t brake_pressure_bar;
+	uint8_t  brake_pedal_pct;
+	uint8_t  brake_override_flag;
 	uint32_t rx_count;
 } VehicleDynamics_t;
 
@@ -82,18 +83,15 @@ osMutexId_t canDataMutexHandle;
 osSemaphoreId_t buttonSemHandle;
 
 osThreadId_t ledTaskHandle;
-osThreadId_t canTxTaskHandle;
-osThreadId_t vehicleTxTaskHandle;
+osThreadId_t dtcSynthGenTaskHandle;
 osThreadId_t canRxPrintTaskHandle;
 osThreadId_t buttonTaskHandle;
 osThreadId_t watchdogTaskHandle;
 
 const osThreadAttr_t ledTask_attributes = { .name = "LedTask", .stack_size = 256
 		* 4, .priority = (osPriority_t) osPriorityLow, };
-const osThreadAttr_t canTxTask_attributes = { .name = "CanTxTask", .stack_size =
-		512 * 4, .priority = (osPriority_t) osPriorityNormal, };
-const osThreadAttr_t vehicleTxTask_attributes = { .name = "VehicleTxTask",
-		.stack_size = 512 * 4, .priority = (osPriority_t) osPriorityNormal, };
+const osThreadAttr_t dtcSynthGenTask_attributes = { .name = "DtcSynthGenTask",
+		.stack_size = 1024 * 4, .priority = (osPriority_t) osPriorityNormal, };
 const osThreadAttr_t canRxPrintTask_attributes = { .name = "CanRxPrintTask",
 		.stack_size = 512 * 4, .priority = (osPriority_t) osPriorityNormal, };
 const osThreadAttr_t buttonTask_attributes =
@@ -111,8 +109,6 @@ const osThreadAttr_t defaultTask_attributes = { .name = "defaultTask",
 /* USER CODE BEGIN FunctionPrototypes */
 
 void StartLedTask(void *argument);
-void StartCanTxTask(void *argument);
-void StartVehicleTxTask(void *argument);
 void StartCanRxPrintTask(void *argument);
 void StartButtonTask(void *argument);
 void StartWatchdogTask(void *argument);
@@ -166,14 +162,18 @@ void MX_FREERTOS_Init(void) {
 	if (ledTaskHandle == NULL) {
 	    UART_Print("ERROR: no se pudo crear LedTask\r\n");
 	}
-	canTxTaskHandle = osThreadNew(StartCanTxTask, NULL, &canTxTask_attributes);
-	if (canTxTaskHandle == NULL) {
-	    UART_Print("ERROR: no se pudo crear CanTxTask\r\n");
+
+	/* NOTA: StartCanTxTask/StartVehicleTxTask (rampa simple sin fallas) quedan
+	 * REEMPLAZADAS por StartDtcSynthGenTask, que transmite las mismas
+	 * EngineStatus/VehicleSpeed/BrakeStatus (0x100/0x101/0x102) MAS
+	 * PowertrainHealth/ChassisHealth/ThrottleSubsystem, ciclando los 14
+	 * escenarios de fallas del generador multi-DTC. No corras ambas juntas:
+	 * competirian por los mismos IDs. */
+	dtcSynthGenTaskHandle = osThreadNew(StartDtcSynthGenTask, NULL, &dtcSynthGenTask_attributes);
+	if (dtcSynthGenTaskHandle == NULL) {
+	    UART_Print("ERROR: no se pudo crear DtcSynthGenTask\r\n");
 	}
-	vehicleTxTaskHandle = osThreadNew(StartVehicleTxTask, NULL, &vehicleTxTask_attributes);
-	if (vehicleTxTaskHandle == NULL) {
-	    UART_Print("ERROR: no se pudo crear VehicleTxTask\r\n");
-	}
+
 	canRxPrintTaskHandle = osThreadNew(StartCanRxPrintTask, NULL,&canRxPrintTask_attributes);
 	if (canRxPrintTaskHandle == NULL) {
 	    UART_Print("ERROR: no se pudo crear CanRxPrintTask\r\n");
@@ -227,134 +227,6 @@ void StartLedTask(void *argument)
 	}
 }
 
-void StartCanTxTask(void *argument) {
-	CAN_TxHeaderTypeDef txHeader;
-	uint8_t txData[BCM_SIM_ENGINE_STATUS_LENGTH];
-	uint32_t txMailbox;
-	uint16_t sim_rpm = 800;
-	uint8_t direction_up = 1;
-	struct bcm_sim_engine_status_t msg;
-
-	txHeader.StdId = BCM_SIM_ENGINE_STATUS_FRAME_ID;
-	txHeader.ExtId = 0;
-	txHeader.IDE = CAN_ID_STD;
-	txHeader.RTR = CAN_RTR_DATA;
-	txHeader.DLC = BCM_SIM_ENGINE_STATUS_LENGTH;
-	txHeader.TransmitGlobalTime = DISABLE;
-
-	for (;;) {
-		if (direction_up) {
-			sim_rpm += 50;
-			if (sim_rpm >= 3000)
-				direction_up = 0;
-		} else {
-			sim_rpm -= 50;
-			if (sim_rpm <= 800)
-				direction_up = 1;
-		}
-
-		/* Valores fisicos -> raw de bus, via las funciones _encode() generadas
-		 * desde la DBC (aplican escala/offset por ti, igual que Com_SendSignal). */
-		msg.rpm            = bcm_sim_engine_status_rpm_encode((double)sim_rpm);
-		msg.coolant_temp   = bcm_sim_engine_status_coolant_temp_encode(90.0);
-		msg.engine_running = bcm_sim_engine_status_engine_running_encode(1.0);
-
-		if (bcm_sim_engine_status_pack(txData, &msg, sizeof(txData)) < 0) {
-			UART_Print("WARN: bcm_sim_engine_status_pack fallo\r\n");
-		} else if (HAL_CAN_AddTxMessage(&hcan1, &txHeader, txData, &txMailbox)
-				!= HAL_OK) {
-			UART_Print("WARN: fallo al transmitir CAN (engine status)\r\n");
-		}
-
-		g_task_health.can_tx_alive_tick = osKernelGetTickCount();
-		osDelay(100);
-	}
-}
-
-/**
- * @brief Simula y transmite las senales de dinamica del vehiculo que
- *        necesita el proyecto de deteccion de fallas (0x101 velocidad,
- *        0x102 freno). En un vehiculo real estas vienen del modulo ABS/ESP
- *        y del switch/pedal de freno, tipicamente en un mensaje CAN
- *        distinto al del ECM -- por eso se simulan en una tarea aparte,
- *        replicando la segmentacion real del bus de carroceria.
- */
-void StartVehicleTxTask(void *argument) {
-	CAN_TxHeaderTypeDef txHeaderSpeed;
-	CAN_TxHeaderTypeDef txHeaderBrake;
-	uint8_t txDataSpeed[BCM_SIM_VEHICLE_SPEED_LENGTH];
-	uint8_t txDataBrake[BCM_SIM_BRAKE_STATUS_LENGTH];
-	uint32_t txMailbox;
-	struct bcm_sim_vehicle_speed_t msgSpeed;
-	struct bcm_sim_brake_status_t  msgBrake;
-
-	uint16_t sim_speed_kph_x10 = 0;   /* arranca detenido */
-	uint8_t  speed_dir_up = 1;
-	uint8_t  brake_toggle_counter = 0;
-	uint8_t  brake_pressed = 0;
-
-	txHeaderSpeed.StdId = BCM_SIM_VEHICLE_SPEED_FRAME_ID;
-	txHeaderSpeed.ExtId = 0;
-	txHeaderSpeed.IDE = CAN_ID_STD;
-	txHeaderSpeed.RTR = CAN_RTR_DATA;
-	txHeaderSpeed.DLC = BCM_SIM_VEHICLE_SPEED_LENGTH;
-	txHeaderSpeed.TransmitGlobalTime = DISABLE;
-
-	txHeaderBrake.StdId = BCM_SIM_BRAKE_STATUS_FRAME_ID;
-	txHeaderBrake.ExtId = 0;
-	txHeaderBrake.IDE = CAN_ID_STD;
-	txHeaderBrake.RTR = CAN_RTR_DATA;
-	txHeaderBrake.DLC = BCM_SIM_BRAKE_STATUS_LENGTH;
-	txHeaderBrake.TransmitGlobalTime = DISABLE;
-
-	for (;;) {
-		/* --- Velocidad: rampa 0-120.0 km/h, sube y baja en diente de sierra --- */
-		if (speed_dir_up) {
-			sim_speed_kph_x10 += 15;
-			if (sim_speed_kph_x10 >= 1200)
-				speed_dir_up = 0;
-		} else {
-			if (sim_speed_kph_x10 >= 15)
-				sim_speed_kph_x10 -= 15;
-			else
-				speed_dir_up = 1;
-		}
-
-		/* sim_speed_kph_x10 esta en decimas de km/h -> pasar a double km/h fisico */
-		msgSpeed.speed = bcm_sim_vehicle_speed_speed_encode(sim_speed_kph_x10 / 10.0);
-
-		if (bcm_sim_vehicle_speed_pack(txDataSpeed, &msgSpeed, sizeof(txDataSpeed)) < 0) {
-			UART_Print("WARN: bcm_sim_vehicle_speed_pack fallo\r\n");
-		} else if (HAL_CAN_AddTxMessage(&hcan1, &txHeaderSpeed, txDataSpeed, &txMailbox)
-				!= HAL_OK) {
-			UART_Print("WARN: fallo al transmitir CAN (velocidad)\r\n");
-		}
-
-		/* --- Freno: se activa unos segundos cada ciclo (~3s a 100ms/vuelta) --- */
-		brake_toggle_counter++;
-		if (brake_toggle_counter >= 30) {
-			brake_toggle_counter = 0;
-			brake_pressed = !brake_pressed;
-		}
-		double brake_pressure = brake_pressed
-				? (double)(80U + (sim_speed_kph_x10 % 40U))
-				: 0.0;
-
-		msgBrake.brake_pedal    = bcm_sim_brake_status_brake_pedal_encode((double)brake_pressed);
-		msgBrake.brake_pressure = bcm_sim_brake_status_brake_pressure_encode(brake_pressure);
-
-		if (bcm_sim_brake_status_pack(txDataBrake, &msgBrake, sizeof(txDataBrake)) < 0) {
-			UART_Print("WARN: bcm_sim_brake_status_pack fallo\r\n");
-		} else if (HAL_CAN_AddTxMessage(&hcan1, &txHeaderBrake, txDataBrake, &txMailbox)
-				!= HAL_OK) {
-			UART_Print("WARN: fallo al transmitir CAN (freno)\r\n");
-		}
-
-		g_task_health.vehicle_tx_alive_tick = osKernelGetTickCount();
-		osDelay(100);
-	}
-}
-
 void StartCanRxPrintTask(void *argument) {
 	char buf[160];
 	EngineStatus_t local_engine;
@@ -367,13 +239,13 @@ void StartCanRxPrintTask(void *argument) {
 			osMutexRelease(canDataMutexHandle);
 
 			snprintf(buf, sizeof(buf),
-					"RPM=%u CoolantTemp=%dC Running=%u | Speed=%u.%ukmh Brake=%u(%ubar) | RxCount=%lu\r\n",
+					"RPM=%u CoolantTemp=%dC Running=%u | Speed=%u.%ukmh BrakePedal=%u%% Override=%u | RxCount=%lu\r\n",
 					local_engine.rpm, local_engine.coolant_temp_c,
 					local_engine.engine_running,
 					(unsigned)(local_vehicle.vehicle_speed_kph_x10 / 10),
 					(unsigned)(local_vehicle.vehicle_speed_kph_x10 % 10),
-					local_vehicle.brake_pedal_pressed,
-					local_vehicle.brake_pressure_bar,
+					local_vehicle.brake_pedal_pct,
+					local_vehicle.brake_override_flag,
 					(unsigned long) (local_engine.rx_count + local_vehicle.rx_count));
 			UART_Print(buf);
 		}

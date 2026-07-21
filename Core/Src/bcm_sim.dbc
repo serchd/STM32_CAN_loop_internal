@@ -32,7 +32,13 @@ NS_ :
 
 BS_:
 
-BU_: ECM ABS BCM
+BU_: ECM ABS BCM STM32SYNTH
+
+BO_ 240 RunMeta: 6 STM32SYNTH
+ SG_ ScenarioId : 0|8@1+ (1,0) [0|31] "" BCM
+ SG_ RunId : 8|8@1+ (1,0) [0|255] "" BCM
+ SG_ SeedLow16 : 16|16@1+ (1,0) [0|65535] "" BCM
+ SG_ TimeS : 32|16@1+ (1,0) [0|600] "s" BCM
 
 BO_ 256 EngineStatus: 4 ECM
  SG_ RPM : 0|16@1+ (1,0) [0|8000] "rpm" BCM
@@ -42,10 +48,31 @@ BO_ 256 EngineStatus: 4 ECM
 BO_ 257 VehicleSpeed: 2 ABS
  SG_ Speed : 0|16@1+ (0.1,0) [0|500] "km/h" BCM
 
-BO_ 258 BrakeStatus: 3 ABS
- SG_ BrakePedal : 0|8@1+ (1,0) [0|1] "" BCM
- SG_ BrakePressure : 8|16@1+ (1,0) [0|500] "bar" BCM
+BO_ 258 BrakeStatus: 2 ABS
+ SG_ BrakePedalPct : 0|8@1+ (1,0) [0|100] "%" BCM
+ SG_ BrakeOverrideFlag : 8|1@1+ (1,0) [0|1] "" BCM
 
+BO_ 272 PowertrainHealth: 5 ECM
+ SG_ BatteryVoltage : 0|16@1+ (0.01,0) [0|20] "V" BCM
+ SG_ OilPressure : 16|16@1+ (0.1,0) [0|100] "psi" BCM
+ SG_ CrankSignalQuality : 32|8@1+ (1,0) [0|100] "%" BCM
+
+BO_ 273 ChassisHealth: 3 ABS
+ SG_ TirePressure : 0|16@1+ (0.1,0) [0|60] "psi" BCM
+ SG_ FuelLevelPct : 16|8@1+ (1,0) [0|100] "%" BCM
+
+BO_ 288 ThrottleSubsystem: 4 ECM
+ SG_ AccelPedalPct : 0|8@1+ (1,0) [0|100] "%" BCM
+ SG_ ThrottlePositionPct : 8|8@1+ (1,0) [0|100] "%" BCM
+ SG_ ThrottleExpectedPct : 16|8@1+ (1,0) [0|100] "%" BCM
+ SG_ ThrottleResidualPct : 24|8@1- (1,0) [-80|80] "%" BCM
+
+CM_ BO_ 240 "Metadata de la corrida sintetica generada en la STM32: escenario, run_id, semilla (16 bits bajos) y tiempo transcurrido. Replica las columnas run_id/escenario/seed/time_s del dataset generado con generador_multidtc.py.";
 CM_ BO_ 256 "Estado de motor: RPM, temperatura de refrigerante y estado de marcha. Simulado en StartCanTxTask.";
 CM_ BO_ 257 "Velocidad de vehiculo (ABS/ESP). Simulada en StartVehicleTxTask.";
-CM_ BO_ 258 "Estado de freno: pedal presionado + presion de linea. Simulada en StartVehicleTxTask.";
+CM_ BO_ 258 "Estado de freno: % de pedal + flag de brake-override (capa de seguridad determinista, no-ML). Redefinido v2 -- antes llevaba presion en bar.";
+CM_ BO_ 272 "Salud del tren motriz: bateria (P0562), presion de aceite (P0520/P0524), calidad de senal de cigueñal (P0335).";
+CM_ BO_ 273 "Salud de chasis: presion de llanta (TPMS) y nivel de combustible.";
+CM_ BO_ 288 "Subsistema de acelerador / mariposa: pedal (APP), TPS real, TPS esperado por el gemelo digital, y el residuo que distingue mariposa atorada de un pedal a fondo normal.";
+
+VAL_ 240 ScenarioId 0 "normal" 1 "bateria_progresiva" 2 "bateria_subita" 3 "temperatura_progresiva" 4 "temperatura_rapida" 5 "aceite_progresiva" 6 "aceite_subita" 7 "ckp_intermitente" 8 "ckp_perdida_total" 9 "llanta_lenta" 10 "llanta_abrupta" 11 "combustible_consumo_normal" 12 "acelerador_progresiva" 13 "acelerador_subita" ;
