@@ -1,0 +1,8 @@
+Debug/
+Release/
+*.elf
+*.map
+*.list
+*.o
+*.su
+*.cyclo

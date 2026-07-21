@@ -40,10 +40,6 @@ void MX_CAN1_Init(void)
 
   /* USER CODE END CAN1_Init 1 */
 	  hcan1.Instance = CAN1;
-	  /* Software master reset del bxCAN, aparte del reset de RCC */
-	  SET_BIT(hcan1.Instance->MCR, CAN_MCR_RESET);
-	  while (READ_BIT(hcan1.Instance->MCR, CAN_MCR_RESET) != 0U) { /* espera breve */ }
-
 	  hcan1.Init.Prescaler = 28;
 	  hcan1.Init.Mode = CAN_MODE_SILENT_LOOPBACK;
 	  hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
@@ -84,6 +80,12 @@ void HAL_CAN_MspInit(CAN_HandleTypeDef* canHandle)
     */
     GPIO_InitStruct.Pin = GPIO_PIN_11|GPIO_PIN_12;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    /* FIX RAIZ (ver CAN_root_cause.pdf): sin transceptor conectado, PA11 (CAN1_RX)
+     * queda flotando con NOPULL. El bxCAN necesita ver 11 bits recesivos en el
+     * PIN FISICO CAN_RX para salir de modo Init -- esto aplica SIEMPRE, incluso
+     * en Silent+Loopback, porque los modos de test solo se activan una vez que
+     * ya se salio de Init. Con PULLUP el pin idlea en recesivo sin transceptor
+     * y HAL_CAN_Start() ya no se cuelga esperando INAK. */
     //GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Pull = GPIO_PULLUP;      // <-- CAMBIA esto (antes GPIO_NOPULL)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
