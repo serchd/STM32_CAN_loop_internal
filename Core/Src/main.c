@@ -45,8 +45,8 @@ typedef struct {
  * ruedas) y del pedal de freno, via el bus CAN de carroceria. */
 typedef struct {
     uint16_t vehicle_speed_kph_x10; /* km/h * 10, ej. 355 = 35.5 km/h */
-    uint8_t  brake_pedal_pressed;   /* 0 = suelto, 1 = presionado */
-    uint16_t brake_pressure_bar;    /* presion de linea de freno simulada */
+    uint8_t  brake_pedal_pct;       /* 0-100, BrakeStatus.BrakePedalPct */
+    uint8_t  brake_override_flag;   /* capa de seguridad NO-ML, BrakeStatus.BrakeOverrideFlag */
     uint32_t rx_count;
 } VehicleDynamics_t;
 
@@ -350,8 +350,8 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 
         UBaseType_t uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
 
-        g_vehicle_dynamics.brake_pedal_pressed = msg.brake_pedal;
-        g_vehicle_dynamics.brake_pressure_bar  = msg.brake_pressure;
+        g_vehicle_dynamics.brake_pedal_pct     = msg.brake_pedal_pct;
+        g_vehicle_dynamics.brake_override_flag = msg.brake_override_flag;
         g_vehicle_dynamics.rx_count++;
 
         taskEXIT_CRITICAL_FROM_ISR(uxSavedInterruptStatus);
